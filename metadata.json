@@ -1,0 +1,5 @@
+{
+  "name": "NovaDrive Player v1",
+  "description": "A high-performance music player for Google Drive files with a D3.js visualizer.",
+  "requestFramePermissions": []
+}

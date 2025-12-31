@@ -184,8 +184,9 @@ const App: React.FC = () => {
   );
 
   return (
-    // Added pt-[env(safe-area-inset-top)] for Android Status Bar / iPhone Notch
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+    // REMOVED global padding from here to prevent black bars.
+    // Instead, we ensure the background covers the whole screen.
+    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative">
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/10 blur-[120px] rounded-full pointer-events-none"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-600/10 blur-[120px] rounded-full pointer-events-none"></div>
 
@@ -198,8 +199,9 @@ const App: React.FC = () => {
         onClose={() => setIsSidebarOpen(false)}
       />
 
-      <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <header className="p-4 md:p-6 flex items-center justify-between glass border-b border-slate-800/50 sticky top-0 z-10">
+      <main className="flex-1 flex flex-col h-full overflow-hidden relative pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+        {/* Header has safe area top padding to clear status bar */}
+        <header className="pt-[calc(1rem+env(safe-area-inset-top))] p-4 md:p-6 flex items-center justify-between glass border-b border-slate-800/50 sticky top-0 z-10">
           <div className="flex items-center gap-4 flex-1 max-w-xl">
             <button 
               onClick={() => setIsSidebarOpen(true)}
@@ -209,7 +211,7 @@ const App: React.FC = () => {
             </button>
 
             <div className="relative w-full">
-              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 translate-y-[calc(-50%+0.25rem)] text-slate-500" size={18} />
               <input 
                 type="text" 
                 placeholder="Search..."

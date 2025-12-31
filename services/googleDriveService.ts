@@ -11,6 +11,7 @@ export class GoogleDriveService {
   private accessToken: string | null = null;
   private tokenClient: any = null;
   private clientId: string;
+  private scriptLoadedPromise: Promise<void>;
 
   constructor() {
     // Priority: Hardcoded Config -> LocalStorage -> Empty
@@ -18,9 +19,27 @@ export class GoogleDriveService {
       ? localStorage.getItem('nova_drive_client_id') || '' 
       : '');
     
+    // Initialize script loader
+    this.scriptLoadedPromise = this.loadGoogleScript();
+
     if (this.clientId) {
       this.initTokenClient();
     }
+  }
+
+  private loadGoogleScript(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (typeof window === 'undefined') return resolve();
+      if ((window as any).google?.accounts) return resolve();
+
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = (e) => reject(new Error('Failed to load Google Identity Services script'));
+      document.head.appendChild(script);
+    });
   }
 
   public setClientId(id: string) {
@@ -72,11 +91,13 @@ export class GoogleDriveService {
 
   // -------------------------
 
-  private initTokenClient() {
+  private async initTokenClient() {
     if (!this.clientId) return;
 
-    if (typeof window !== 'undefined' && (window as any).google) {
-      try {
+    try {
+      await this.scriptLoadedPromise;
+      
+      if (typeof window !== 'undefined' && (window as any).google) {
         this.tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
           client_id: this.clientId,
           scope: SCOPES,
@@ -90,9 +111,9 @@ export class GoogleDriveService {
             this.saveToken(response.access_token, response.expires_in || 3599);
           },
         });
-      } catch (e) {
-        console.error("Failed to initialize Google Token Client:", e);
       }
+    } catch (e) {
+      console.error("Failed to initialize Google Token Client:", e);
     }
   }
 
@@ -123,37 +144,54 @@ export class GoogleDriveService {
       throw new Error("MISSING_CLIENT_ID");
     }
 
+    // Wait for script to load before trying to connect
+    await this.scriptLoadedPromise;
+
     return new Promise((resolve, reject) => {
       // Re-initialize if needed
       if (!this.tokenClient) {
-        this.initTokenClient();
+        this.initTokenClient().then(() => {
+            if (!this.tokenClient) {
+                 reject(new Error("Google Identity Services failed to initialize. Check internet connection."));
+            }
+        });
       }
 
-      if (!this.tokenClient) {
-        reject(new Error("Google Identity Services not loaded or Client ID invalid"));
-        return;
-      }
+      // Small delay to ensure initTokenClient completes if it was just called
+      setTimeout(() => {
+          if (!this.tokenClient) {
+            // Attempt one last immediate init
+             try {
+                this.initTokenClient();
+             } catch(e) { /* ignore */ }
+             
+             if (!this.tokenClient) {
+                reject(new Error("Google Identity Services not loaded. Please refresh."));
+                return;
+             }
+          }
 
-      // Override the callback for this specific request to handle the promise
-      this.tokenClient.callback = async (response: any) => {
-        if (response.error !== undefined) {
-          reject(new Error(`Auth Error: ${response.error}`));
-          return;
-        }
+          // Override the callback for this specific request to handle the promise
+          this.tokenClient.callback = async (response: any) => {
+            if (response.error !== undefined) {
+              reject(new Error(`Auth Error: ${response.error}`));
+              return;
+            }
 
-        try {
-          // Verify user email if configured
-          await this.verifyUser(response.access_token);
-          
-          this.accessToken = response.access_token;
-          this.saveToken(response.access_token, parseInt(response.expires_in || '3599', 10));
-          resolve(this.accessToken!);
-        } catch (e) {
-          reject(e);
-        }
-      };
+            try {
+              // Verify user email if configured
+              await this.verifyUser(response.access_token);
+              
+              this.accessToken = response.access_token;
+              this.saveToken(response.access_token, parseInt(response.expires_in || '3599', 10));
+              resolve(this.accessToken!);
+            } catch (e) {
+              reject(e);
+            }
+          };
 
-      this.tokenClient.requestAccessToken({ prompt: 'consent' });
+          this.tokenClient.requestAccessToken({ prompt: 'consent' });
+      }, 100);
     });
   }
 

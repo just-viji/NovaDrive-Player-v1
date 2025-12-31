@@ -23,7 +23,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onConnect, isSyncing, isConnected, on
       />
 
       {/* Sidebar Container */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-72 lg:w-64 glass border-r border-slate-800 flex flex-col p-6 transform transition-transform duration-300 lg:translate-x-0 lg:static ${
+      {/* Added pt-[env(safe-area-inset-top)] to respect top notch */}
+      <div className={`fixed inset-y-0 left-0 z-50 w-72 lg:w-64 glass border-r border-slate-800 flex flex-col p-6 pt-[calc(1.5rem+env(safe-area-inset-top))] transform transition-transform duration-300 lg:translate-x-0 lg:static ${
         isOpen ? 'translate-x-0' : '-translate-x-full'
       }`}>
         <div className="flex items-center justify-between mb-10">

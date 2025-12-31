@@ -184,7 +184,8 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative">
+    // Added pt-[env(safe-area-inset-top)] for Android Status Bar / iPhone Notch
+    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/10 blur-[120px] rounded-full pointer-events-none"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-600/10 blur-[120px] rounded-full pointer-events-none"></div>
 

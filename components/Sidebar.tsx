@@ -24,10 +24,9 @@ const Sidebar: React.FC<SidebarProps> = ({ onConnect, isSyncing, isConnected, on
 
       {/* Sidebar Container */}
       {/* 
-        Modified: Added pt-[env(safe-area-inset-top)] and extra padding to ensure content clears the notch.
-        The glass effect will cover the status bar area.
+        Modified: Use pt-12 (3rem) base + env() to ensure status bar is cleared even if env() is 0 initially.
       */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-72 lg:w-64 glass border-r border-slate-800 flex flex-col p-6 pt-[calc(2rem+env(safe-area-inset-top))] transform transition-transform duration-300 lg:translate-x-0 lg:static ${
+      <div className={`fixed inset-y-0 left-0 z-50 w-72 lg:w-64 glass border-r border-slate-800 flex flex-col p-6 pt-[calc(3rem+env(safe-area-inset-top))] transform transition-transform duration-300 lg:translate-x-0 lg:static ${
         isOpen ? 'translate-x-0' : '-translate-x-full'
       }`}>
         <div className="flex items-center justify-between mb-10">

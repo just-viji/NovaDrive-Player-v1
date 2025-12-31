@@ -200,8 +200,8 @@ const App: React.FC = () => {
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
-        {/* Header has safe area top padding to clear status bar */}
-        <header className="pt-[calc(1rem+env(safe-area-inset-top))] p-4 md:p-6 flex items-center justify-between glass border-b border-slate-800/50 sticky top-0 z-10">
+        {/* Header has safe area top padding to clear status bar. Increased to pt-[calc(3rem+env...)] to be safe */}
+        <header className="pt-[calc(3rem+env(safe-area-inset-top))] p-4 md:p-6 flex items-center justify-between glass border-b border-slate-800/50 sticky top-0 z-10">
           <div className="flex items-center gap-4 flex-1 max-w-xl">
             <button 
               onClick={() => setIsSidebarOpen(true)}

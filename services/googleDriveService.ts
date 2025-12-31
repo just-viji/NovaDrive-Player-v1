@@ -11,7 +11,7 @@ export class GoogleDriveService {
   private accessToken: string | null = null;
   private tokenClient: any = null;
   private clientId: string;
-  private scriptLoadedPromise: Promise<void>;
+  private isScriptReady: Promise<void>;
 
   constructor() {
     // Priority: Hardcoded Config -> LocalStorage -> Empty
@@ -19,26 +19,43 @@ export class GoogleDriveService {
       ? localStorage.getItem('nova_drive_client_id') || '' 
       : '');
     
-    // Initialize script loader
-    this.scriptLoadedPromise = this.loadGoogleScript();
+    // Initialize script waiter
+    this.isScriptReady = this.waitForGoogleScript();
 
     if (this.clientId) {
-      this.initTokenClient();
+      // Try to init immediately if possible, but don't block
+      this.initTokenClient().catch(console.error);
     }
   }
 
-  private loadGoogleScript(): Promise<void> {
+  /**
+   * Waits for the Google Identity Services script (loaded via index.html) to be available on window.
+   */
+  private waitForGoogleScript(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (typeof window === 'undefined') return resolve();
-      if ((window as any).google?.accounts) return resolve();
+      
+      // Check if already available
+      if ((window as any).google?.accounts) {
+        return resolve();
+      }
 
-      const script = document.createElement('script');
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.defer = true;
-      script.onload = () => resolve();
-      script.onerror = (e) => reject(new Error('Failed to load Google Identity Services script'));
-      document.head.appendChild(script);
+      // Poll for the script to load (since it's async in index.html)
+      let checks = 0;
+      const interval = setInterval(() => {
+        if ((window as any).google?.accounts) {
+          clearInterval(interval);
+          resolve();
+        }
+        checks++;
+        // Check for 10 seconds (100 * 100ms)
+        if (checks > 100) {
+          clearInterval(interval);
+          // We resolve anyway to allow re-trying later, but log the warning
+          console.warn("Google Identity Services script timeout. Auth may fail.");
+          resolve(); 
+        }
+      }, 100);
     });
   }
 
@@ -95,22 +112,28 @@ export class GoogleDriveService {
     if (!this.clientId) return;
 
     try {
-      await this.scriptLoadedPromise;
+      await this.isScriptReady;
       
-      if (typeof window !== 'undefined' && (window as any).google) {
+      if (typeof window !== 'undefined' && (window as any).google?.accounts?.oauth2) {
+        // Prevent re-initialization if already exists (optional, but good for stability)
         this.tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
           client_id: this.clientId,
           scope: SCOPES,
           callback: async (response: any) => {
             if (response.error !== undefined) {
-              console.error("Token Client Error:", response);
+              console.error("Token Client Callback Error:", response);
+              // We can't reject a promise here easily as this is a callback
+              // But the connect() method wraps this in a way to handle it.
               return;
             }
+            // Note: This callback is often overridden in connect() for the Promise flow
+            // But we keep this default handler just in case
             this.accessToken = response.access_token;
-            // Implicit flow tokens usually last 3600s (1 hour)
             this.saveToken(response.access_token, response.expires_in || 3599);
           },
         });
+      } else {
+         console.warn("Google Global Object not found during init");
       }
     } catch (e) {
       console.error("Failed to initialize Google Token Client:", e);
@@ -144,54 +167,58 @@ export class GoogleDriveService {
       throw new Error("MISSING_CLIENT_ID");
     }
 
-    // Wait for script to load before trying to connect
-    await this.scriptLoadedPromise;
+    // Ensure script is ready
+    await this.isScriptReady;
 
-    return new Promise((resolve, reject) => {
-      // Re-initialize if needed
+    return new Promise(async (resolve, reject) => {
+      // 1. Ensure Client is Initialized
       if (!this.tokenClient) {
-        this.initTokenClient().then(() => {
-            if (!this.tokenClient) {
-                 reject(new Error("Google Identity Services failed to initialize. Check internet connection."));
+        await this.initTokenClient();
+        if (!this.tokenClient) {
+            // Check if internet is actually down or just the script blocked
+            if (!navigator.onLine) {
+                 reject(new Error("No Internet connection. Cannot connect to Google."));
+            } else {
+                 reject(new Error("Google Identity Services failed to load. Try refreshing the page."));
             }
-        });
+            return;
+        }
       }
 
-      // Small delay to ensure initTokenClient completes if it was just called
-      setTimeout(() => {
-          if (!this.tokenClient) {
-            // Attempt one last immediate init
-             try {
-                this.initTokenClient();
-             } catch(e) { /* ignore */ }
-             
-             if (!this.tokenClient) {
-                reject(new Error("Google Identity Services not loaded. Please refresh."));
-                return;
-             }
+      // 2. Request Token
+      try {
+        // We override the callback for THIS specific request to capture the result in this Promise
+        this.tokenClient.callback = async (response: any) => {
+          if (response.error) {
+            // Handle specific errors like popup_closed
+            if (response.error === 'popup_closed_by_user') {
+                reject(new Error("Login cancelled."));
+            } else if (response.error === 'access_denied') {
+                reject(new Error("Access denied."));
+            } else {
+                reject(new Error(`Auth Error: ${response.error}`));
+            }
+            return;
           }
 
-          // Override the callback for this specific request to handle the promise
-          this.tokenClient.callback = async (response: any) => {
-            if (response.error !== undefined) {
-              reject(new Error(`Auth Error: ${response.error}`));
-              return;
-            }
-
+          if (response.access_token) {
             try {
-              // Verify user email if configured
               await this.verifyUser(response.access_token);
-              
               this.accessToken = response.access_token;
               this.saveToken(response.access_token, parseInt(response.expires_in || '3599', 10));
               resolve(this.accessToken!);
             } catch (e) {
               reject(e);
             }
-          };
+          }
+        };
 
-          this.tokenClient.requestAccessToken({ prompt: 'consent' });
-      }, 100);
+        // Trigger the popup
+        this.tokenClient.requestAccessToken({ prompt: 'consent' });
+
+      } catch (e) {
+        reject(new Error("Failed to request access token: " + (e as Error).message));
+      }
     });
   }
 

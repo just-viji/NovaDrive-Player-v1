@@ -11,6 +11,14 @@ export interface Track {
   isRemote?: boolean;
 }
 
+export interface Playlist {
+  id: string;
+  name: string;
+  trackIds: string[];
+  createdAt: number;
+  coverArt?: string;
+}
+
 export interface PlayerState {
   currentTrack: Track | null;
   isPlaying: boolean;

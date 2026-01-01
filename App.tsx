@@ -3,10 +3,12 @@ import React, { useState, useCallback, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Player from './components/Player';
 import SettingsModal from './components/SettingsModal';
+import CreatePlaylistModal from './components/CreatePlaylistModal';
+import AddToPlaylistModal from './components/AddToPlaylistModal';
 import { MOCK_TRACKS } from './constants';
-import { Track } from './types';
+import { Track, Playlist } from './types';
 import { driveService } from './services/googleDriveService';
-import { Cloud, Play, MoreVertical, Clock, Music, Grid, List as ListIcon, Search as SearchIcon, Loader2, CheckCircle2, Settings, Menu } from 'lucide-react';
+import { Cloud, Play, MoreVertical, Clock, Music, Grid, List as ListIcon, Search as SearchIcon, Loader2, CheckCircle2, Settings, Menu, ListPlus, FolderHeart } from 'lucide-react';
 
 const App: React.FC = () => {
   const [tracks, setTracks] = useState<Track[]>(MOCK_TRACKS);
@@ -18,11 +20,34 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
+  // Playlist State
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
+  const [trackToAdd, setTrackToAdd] = useState<Track | null>(null); // Triggers AddToPlaylistModal if not null
+  const [currentView, setCurrentView] = useState<{ type: 'all' | 'playlist', id?: string }>({ type: 'all' });
+
   // Player State
   const [repeatMode, setRepeatMode] = useState<'none' | 'all' | 'one'>('none');
   const [isShuffle, setIsShuffle] = useState(false);
   const [shuffledTracks, setShuffledTracks] = useState<Track[]>([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
+
+  // Load Playlists on Mount
+  useEffect(() => {
+    const saved = localStorage.getItem('nova_playlists');
+    if (saved) {
+      try {
+        setPlaylists(JSON.parse(saved));
+      } catch (e) {
+        console.error("Failed to parse playlists", e);
+      }
+    }
+  }, []);
+
+  // Save Playlists on Change
+  useEffect(() => {
+    localStorage.setItem('nova_playlists', JSON.stringify(playlists));
+  }, [playlists]);
 
   // Auto-connect on mount if token is stored
   useEffect(() => {
@@ -35,10 +60,8 @@ const App: React.FC = () => {
           const driveTracks = await driveService.fetchAudioFiles();
           if (driveTracks.length > 0) {
             setTracks(driveTracks);
-            if (isShuffle) {
-              setShuffledTracks(shuffleArray(driveTracks));
-            }
-            setCurrentTrack(driveTracks[0]);
+            // Don't auto-set current track if we are restoring state, but for now simple default:
+            if (!currentTrack) setCurrentTrack(driveTracks[0]);
           }
         } catch (error) {
           console.error("Auto-sync failed:", error);
@@ -78,6 +101,33 @@ const App: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const handleCreatePlaylist = (name: string) => {
+    const newPlaylist: Playlist = {
+      id: crypto.randomUUID(),
+      name,
+      trackIds: [],
+      createdAt: Date.now()
+    };
+    setPlaylists(prev => [...prev, newPlaylist]);
+  };
+
+  const handleDeletePlaylist = (id: string) => {
+    setPlaylists(prev => prev.filter(p => p.id !== id));
+    if (currentView.type === 'playlist' && currentView.id === id) {
+      setCurrentView({ type: 'all' });
+    }
+  };
+
+  const handleAddToPlaylist = (playlistId: string, trackId: string) => {
+    setPlaylists(prev => prev.map(pl => {
+      if (pl.id === playlistId && !pl.trackIds.includes(trackId)) {
+        return { ...pl, trackIds: [...pl.trackIds, trackId] };
+      }
+      return pl;
+    }));
+    setTrackToAdd(null);
   };
 
   const handleTrackSelect = async (track: Track) => {
@@ -125,11 +175,13 @@ const App: React.FC = () => {
     setIsShuffle(prev => {
       const newState = !prev;
       if (newState) {
-        setShuffledTracks(shuffleArray(tracks));
+        // We need to decide what to shuffle. currently showing tracks?
+        // For simplicity, let's shuffle the full displayed list.
+        setShuffledTracks(shuffleArray(filteredTracks)); 
       }
       return newState;
     });
-  }, [tracks]);
+  }, [tracks]); // Dependencies will need logic update below
 
   const toggleRepeat = useCallback(() => {
     setRepeatMode(prev => {
@@ -139,13 +191,46 @@ const App: React.FC = () => {
     });
   }, []);
 
+  // Compute displayed tracks based on View + Search
+  const getBaseTracks = () => {
+    if (currentView.type === 'playlist' && currentView.id) {
+      const playlist = playlists.find(p => p.id === currentView.id);
+      if (!playlist) return tracks;
+      // Filter main tracks by IDs in playlist.
+      // Note: If Drive hasn't loaded yet, these might be missing.
+      return tracks.filter(t => playlist.trackIds.includes(t.id));
+    }
+    return tracks;
+  };
+
+  const baseTracks = getBaseTracks();
+
+  const filteredTracks = baseTracks.filter(t => 
+    t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    t.artist.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // Update shuffle when base list changes significantly? 
+  // For now, let's keep simple shuffle logic: if shuffle is on, we use shuffled version of 'filteredTracks'
+  // But updating 'shuffledTracks' on every render is bad. 
+  // Let's just update shuffle queue when 'isShuffle' is toggled or when track list changes drastically (handled in useEffect below).
+
+  useEffect(() => {
+    if (isShuffle) {
+      setShuffledTracks(shuffleArray(filteredTracks));
+    }
+  }, [currentView, isShuffle]); // Re-shuffle when view changes
+
   const handleNext = useCallback(() => {
     if (!currentTrack) return;
     
-    const queue = isShuffle ? shuffledTracks : tracks;
+    const queue = isShuffle ? shuffledTracks : filteredTracks;
     const currentIndex = queue.findIndex(t => t.id === currentTrack.id);
     
+    // If current track isn't in current view (e.g. switched playlist), try to find next in queue anyway, or start from 0
     let nextIndex = currentIndex + 1;
+    
+    if (currentIndex === -1) nextIndex = 0;
     
     if (nextIndex >= queue.length) {
       nextIndex = 0;
@@ -154,12 +239,12 @@ const App: React.FC = () => {
     if (queue[nextIndex]) {
       handleTrackSelect(queue[nextIndex]);
     }
-  }, [currentTrack, tracks, shuffledTracks, isShuffle, repeatMode]);
+  }, [currentTrack, filteredTracks, shuffledTracks, isShuffle, repeatMode]);
 
   const handlePrevious = useCallback(() => {
     if (!currentTrack) return;
 
-    const queue = isShuffle ? shuffledTracks : tracks;
+    const queue = isShuffle ? shuffledTracks : filteredTracks;
     const currentIndex = queue.findIndex(t => t.id === currentTrack.id);
     
     let prevIndex = currentIndex - 1;
@@ -170,22 +255,13 @@ const App: React.FC = () => {
     if (queue[prevIndex]) {
       handleTrackSelect(queue[prevIndex]);
     }
-  }, [currentTrack, tracks, shuffledTracks, isShuffle]);
+  }, [currentTrack, filteredTracks, shuffledTracks, isShuffle]);
 
-  useEffect(() => {
-    if (isShuffle) {
-      setShuffledTracks(shuffleArray(tracks));
-    }
-  }, [tracks]);
-
-  const filteredTracks = tracks.filter(t => 
-    t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    t.artist.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const currentPlaylistName = currentView.type === 'playlist' 
+    ? playlists.find(p => p.id === currentView.id)?.name || 'Unknown Playlist'
+    : isConnected ? "Google Drive Files" : "Demo Tracks";
 
   return (
-    // REMOVED global padding from here to prevent black bars.
-    // Instead, we ensure the background covers the whole screen.
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative">
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/10 blur-[120px] rounded-full pointer-events-none"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-600/10 blur-[120px] rounded-full pointer-events-none"></div>
@@ -197,10 +273,14 @@ const App: React.FC = () => {
         onOpenSettings={() => setShowSettings(true)}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
+        playlists={playlists}
+        onCreatePlaylist={() => setShowCreatePlaylist(true)}
+        currentView={currentView}
+        onSelectView={setCurrentView}
+        onDeletePlaylist={handleDeletePlaylist}
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
-        {/* Header has safe area top padding to clear status bar. Increased to pt-[calc(3rem+env...)] to be safe */}
         <header className="pt-[calc(3rem+env(safe-area-inset-top))] p-4 md:p-6 flex items-center justify-between glass border-b border-slate-800/50 sticky top-0 z-10">
           <div className="flex items-center gap-4 flex-1 max-w-xl">
             <button 
@@ -255,40 +335,57 @@ const App: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto p-4 md:p-10 pb-40">
           <div className="max-w-7xl mx-auto space-y-8 md:space-y-10">
-            <div className="relative group overflow-hidden rounded-3xl bg-gradient-to-r from-blue-600 to-indigo-800 p-6 md:p-8 shadow-2xl shadow-blue-500/20">
-              <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
-                <Music size={120} />
-              </div>
-              <div className="relative z-10 max-w-2xl">
-                <div className="flex items-center space-x-2 text-blue-100 mb-2 font-medium">
-                  <div className="bg-white/20 p-1 rounded-md">
-                    <Cloud size={16} />
-                  </div>
-                  <span className="text-xs md:text-sm uppercase tracking-widest">Cloud Streaming</span>
+            {currentView.type === 'all' && (
+                <div className="relative group overflow-hidden rounded-3xl bg-gradient-to-r from-blue-600 to-indigo-800 p-6 md:p-8 shadow-2xl shadow-blue-500/20">
+                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+                    <Music size={120} />
                 </div>
-                <h2 className="text-2xl md:text-4xl font-bold font-display text-white mb-4 leading-tight">
-                  {isConnected ? "Your Drive Library is Ready." : "Stream from the Cloud."}
-                </h2>
-                <p className="text-blue-100/80 mb-6 text-sm md:text-lg">
-                  {isConnected 
-                    ? "Enjoy your high-fidelity audio stream directly from Google Drive." 
-                    : "Connect your Google Drive to access your entire music collection instantly."}
-                </p>
-                {!isConnected && (
-                  <button 
-                    onClick={handleConnectDrive}
-                    className="bg-white text-slate-900 px-6 py-2 md:px-8 md:py-3 rounded-full font-bold text-sm md:text-base hover:bg-blue-50 transition-colors shadow-lg"
-                  >
-                    Sync Google Drive
-                  </button>
-                )}
-              </div>
-            </div>
+                <div className="relative z-10 max-w-2xl">
+                    <div className="flex items-center space-x-2 text-blue-100 mb-2 font-medium">
+                    <div className="bg-white/20 p-1 rounded-md">
+                        <Cloud size={16} />
+                    </div>
+                    <span className="text-xs md:text-sm uppercase tracking-widest">Cloud Streaming</span>
+                    </div>
+                    <h2 className="text-2xl md:text-4xl font-bold font-display text-white mb-4 leading-tight">
+                    {isConnected ? "Your Drive Library is Ready." : "Stream from the Cloud."}
+                    </h2>
+                    <p className="text-blue-100/80 mb-6 text-sm md:text-lg">
+                    {isConnected 
+                        ? "Enjoy your high-fidelity audio stream directly from Google Drive." 
+                        : "Connect your Google Drive to access your entire music collection instantly."}
+                    </p>
+                    {!isConnected && (
+                    <button 
+                        onClick={handleConnectDrive}
+                        className="bg-white text-slate-900 px-6 py-2 md:px-8 md:py-3 rounded-full font-bold text-sm md:text-base hover:bg-blue-50 transition-colors shadow-lg"
+                    >
+                        Sync Google Drive
+                    </button>
+                    )}
+                </div>
+                </div>
+            )}
+
+            {currentView.type === 'playlist' && (
+                <div className="relative group overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-600 to-purple-800 p-6 md:p-8 shadow-2xl shadow-indigo-500/20 flex items-end min-h-[200px]">
+                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+                        <FolderHeart size={120} />
+                    </div>
+                    <div className="relative z-10">
+                        <div className="text-xs md:text-sm uppercase tracking-widest text-indigo-200 font-bold mb-1">Playlist</div>
+                        <h2 className="text-3xl md:text-5xl font-bold font-display text-white leading-tight">
+                            {currentPlaylistName}
+                        </h2>
+                        <p className="text-indigo-200 mt-2">{filteredTracks.length} tracks</p>
+                    </div>
+                </div>
+            )}
 
             <div className="space-y-4 md:space-y-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg md:text-2xl font-bold font-display flex items-center space-x-2">
-                  <span>{isConnected ? "Google Drive Files" : "Demo Tracks"}</span>
+                  <span>{currentPlaylistName}</span>
                   <span className="text-slate-500 font-normal text-xs md:text-sm ml-2">({filteredTracks.length})</span>
                 </h3>
                 <div className="flex items-center space-x-1 md:space-x-2 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
@@ -312,6 +409,14 @@ const App: React.FC = () => {
                             <Play size={20} fill="white" className="ml-1" />
                           </div>
                         </div>
+                        {/* Add to Playlist Overlay Button */}
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); setTrackToAdd(track); }}
+                            className="absolute top-2 right-2 bg-black/50 hover:bg-blue-600 text-white p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0"
+                            title="Add to Playlist"
+                        >
+                            <ListPlus size={16} />
+                        </button>
                       </div>
                       <h4 className="font-semibold text-white truncate mb-1 text-xs md:text-sm">{track.name}</h4>
                       <p className="text-slate-500 text-[10px] md:text-xs truncate">{track.artist}</p>
@@ -327,6 +432,7 @@ const App: React.FC = () => {
                         <th className="px-4 py-3 md:px-6 md:py-4 font-semibold">Title</th>
                         <th className="px-4 py-3 md:px-6 md:py-4 font-semibold hidden sm:table-cell">Artist</th>
                         <th className="px-4 py-3 md:px-6 md:py-4 font-semibold hidden md:table-cell">Album</th>
+                        <th className="px-4 py-3 md:px-6 md:py-4 font-semibold text-right w-10"></th>
                         <th className="px-4 py-3 md:px-6 md:py-4 font-semibold text-right"><Clock size={14} className="inline mr-1" /></th>
                       </tr>
                     </thead>
@@ -349,6 +455,15 @@ const App: React.FC = () => {
                           </td>
                           <td className="px-4 py-3 md:px-6 md:py-4 text-xs text-slate-400 hidden sm:table-cell">{track.artist}</td>
                           <td className="px-4 py-3 md:px-6 md:py-4 text-xs text-slate-400 hidden md:table-cell">{track.album || 'Unknown'}</td>
+                          <td className="px-4 py-3 md:px-6 md:py-4 text-right">
+                             <button 
+                                onClick={(e) => { e.stopPropagation(); setTrackToAdd(track); }}
+                                className="text-slate-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                                title="Add to Playlist"
+                             >
+                                <ListPlus size={16} />
+                             </button>
+                          </td>
                           <td className="px-4 py-3 md:px-6 md:py-4 text-xs text-slate-500 text-right">
                             {track.duration > 0 ? `${Math.floor(track.duration / 60)}:${(track.duration % 60).toString().padStart(2, '0')}` : '--:--'}
                           </td>
@@ -378,6 +493,23 @@ const App: React.FC = () => {
 
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+
+      {showCreatePlaylist && (
+        <CreatePlaylistModal 
+          onClose={() => setShowCreatePlaylist(false)} 
+          onSave={handleCreatePlaylist} 
+        />
+      )}
+
+      {trackToAdd && (
+        <AddToPlaylistModal
+            track={trackToAdd}
+            playlists={playlists}
+            onClose={() => setTrackToAdd(null)}
+            onAdd={handleAddToPlaylist}
+            onCreateNew={() => { setTrackToAdd(null); setShowCreatePlaylist(true); }}
+        />
       )}
     </div>
   );

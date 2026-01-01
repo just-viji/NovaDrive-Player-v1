@@ -9,7 +9,7 @@ import { Track } from './types';
 // 1. Paste your Google Cloud Client ID here.
 //    You can get this from https://console.cloud.google.com/apis/credentials
 //    If left empty, you will need to enter it in the App Settings UI.
-export const GOOGLE_CLIENT_ID = '431546047528-pv8u7ev6rbjrmsu4eoh8dtsv2478mml7.apps.googleusercontent.com'; 
+export const GOOGLE_CLIENT_ID = '740773563373-luo03qlgkd3i3iafpefanjg6jod0d0ml.apps.googleusercontent.com'; 
 
 // 2. (Optional) Paste your Gmail address here.
 //    If set, the app will ONLY allow this specific email to log in.
